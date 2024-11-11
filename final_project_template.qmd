@@ -1,7 +1,7 @@
 ---
 title: "Your Title"
 subtitle: "BMIN503/EPID600 Final Project"
-author: "FirstName LastName"
+author: "Madison Carrigan"
 format: html
 editor: visual
 number-sections: true
@@ -14,15 +14,27 @@ Use this template to complete your project throughout the course. Your Final Pro
 
 ## Overview {#sec-overview}
 
+This project examines the effectiveness of AI-based models in predicting ICU readmissions for cancer patients with comorbidities, utilizing data from SEER and MIMIC-IV. By comparing the accuracy of AI predictions with traditional clinical methods, the project aims to evaluate the added benefits of AI in improving patient outcomes and decision-making in ICU settings.
+
 Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
 
 ## Introduction {#sec-introduction}
+
+In healthcare, predicting patient outcomes such as ICU readmissions is crucial to optimizing patient care and resource allocation. ICU readmissions are particularly concerning for cancer patients with comorbid conditions, as these patients often face complex, high-risk health profiles. Early identification of patients at high risk for readmission could enable targeted interventions, potentially reducing healthcare costs and improving patient quality of life. Despite existing clinical tools for readmission prediction, advances in AI and machine learning have opened new opportunities to enhance predictive accuracy by analyzing large, diverse datasets. However, the efficacy of these AI-driven models over traditional clinical methods is still under investigation, particularly in specific populations like oncology patients with comorbidities.
+
+The interdisciplinary nature of this research integrates insights from data science, clinical medicine, and biomedical informatics. Data science provides machine learning techniques for developing predictive models, when clinical expertise informs the understanding of patient health patterns, risk factors, and medical decision-making processes. Biomedical informatics facilitates data integration from complex healthcare systems, making large-scale analysis of ICU readmission feasible. Conversations with faculty, including experts in ophthalmology and biomedical informatics, highlighted the value of accurate predictions for managing patient outcomes and how AI can support clinical decisions. By drawing from each field, this study seeks to assess AI's role in ICU readmission prediction for cancer patients, providing data-driven insights that may influence healthcare practice.
 
 Describe the problem addressed, its significance, and some background to motivate the problem. This should extend what is in the @sec-overview.
 
 Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
 
 ## Methods {#sec-methods}
+
+To begin the project, the first step involves data acquisition and preprocessing to integrate SEER and MIMIC-IV datasets effectively.
+
+```{r}
+# Small change - pushing to confirm
+```
 
 Describe the data used and general methodological approach used to address the problem described in the @sec-introduction. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
 
