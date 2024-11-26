@@ -14,9 +14,7 @@ Use this template to complete your project throughout the course. Your Final Pro
 
 ## Overview {#sec-overview}
 
-This project examines the effectiveness of AI-based models in predicting ICU readmissions for cancer patients with comorbidities, utilizing data from SEER and MIMIC-IV. By comparing the accuracy of AI predictions with traditional clinical methods, the project aims to evaluate the added benefits of AI in improving patient outcomes and decision-making in ICU settings.
-
-Give a brief a description of your project and its goal(s), what data you are using to complete it, and what two faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+This project examines the effectiveness of AI-based models in predicting ICU readmissions for cancer patients with comorbidities, utilizing data from MIMIC-IV. By comparing the accuracy of AI predictions with traditional clinical methods, the project aims to evaluate the added benefits of AI in improving patient outcomes and decision-making in ICU settings.
 
 ## Introduction {#sec-introduction}
 
@@ -24,19 +22,145 @@ In healthcare, predicting patient outcomes such as ICU readmissions is crucial t
 
 The interdisciplinary nature of this research integrates insights from data science, clinical medicine, and biomedical informatics. Data science provides machine learning techniques for developing predictive models, when clinical expertise informs the understanding of patient health patterns, risk factors, and medical decision-making processes. Biomedical informatics facilitates data integration from complex healthcare systems, making large-scale analysis of ICU readmission feasible. Conversations with faculty, including experts in ophthalmology and biomedical informatics, highlighted the value of accurate predictions for managing patient outcomes and how AI can support clinical decisions. By drawing from each field, this study seeks to assess AI's role in ICU readmission prediction for cancer patients, providing data-driven insights that may influence healthcare practice.
 
-Describe the problem addressed, its significance, and some background to motivate the problem. This should extend what is in the @sec-overview.
-
-Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+*Describe the problem addressed, its significance, and some background to motivate the problem. This should extend what is in the @sec-overview.*
 
 ## Methods {#sec-methods}
 
-To begin the project, the first step involves data acquisition and preprocessing to integrate SEER and MIMIC-IV datasets effectively.
+To begin the project, the first step involves data acquisition and preprocessing on the MIMIC-IV dataset
 
 ```{r}
-# Small change - pushing to confirm
+# Install necessary packages
+install.packages(c("DBI", "dbplyr", "tidyverse", "lubridate", "ggplot2", "caret", "randomForest", "xgboost"))
+
+# Load libraries
+library(DBI)
+library(dbplyr)
+library(tidyverse)
+library(lubridate)
+
+# Connect to the database
+con <- DBI::dbConnect(RPostgres::Postgres(),
+                      dbname = "mimic",
+                      host = "your_host",
+                      port = 5432,
+                      user = "your_username",
+                      password = "your_password")
+
+# Test connection and list tables
+dbListTables(con)
 ```
 
-Describe the data used and general methodological approach used to address the problem described in the @sec-introduction. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.
+Starting by extracting key data (e.g. ICU stays, demographics, labs, mortality, etc.) and joining tables to create a dataset.
+
+```{r}
+# Query ICU admissions with patient demographics and outcomes
+icu_data <- tbl(con, "icustays") %>%
+  inner_join(tbl(con, "patients"), by = c("subject_id")) %>%
+  inner_join(tbl(con, "admissions"), by = c("hadm_id")) %>%
+  select(subject_id, hadm_id, icustay_id, gender, dob, intime, outtime, death) %>%
+  mutate(age = year(intime) - year(dob)) %>%
+  filter(age >= 18) %>% # Focus on adults
+  collect() # Pull the data into R for local analysis
+
+# Save extracted data for reuse
+write_csv(icu_data, "data/icu_data.csv")
+```
+
+Clean & Prepare Data - handle missing values & transform variables
+
+```{r}
+# Load ICU data
+icu_data <- read_csv("data/icu_data.csv")
+
+# Clean data
+icu_data <- icu_data %>%
+  mutate(length_of_stay = as.numeric(difftime(outtime, intime, units = "days")),
+         death = ifelse(death == "Y", 1, 0)) %>%
+  filter(length_of_stay > 0) # Remove invalid stays
+
+# Summary statistics to check
+summary(icu_data)
+```
+
+Exploratory Data Analysis - Visualizing trends and relationships in the data
+
+```{r}
+# Age distribution of ICU patients
+icu_data %>%
+  ggplot(aes(x = age)) +
+  geom_histogram(binwidth = 5, fill = "blue", alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Age Distribution of ICU Patients", x = "Age", y = "Count")
+
+# Mortality by length of stay
+icu_data %>%
+  ggplot(aes(x = length_of_stay, fill = as.factor(death))) +
+  geom_histogram(position = "stack", binwidth = 1) +
+  theme_minimal() +
+  labs(title = "Mortality by Length of Stay", x = "Length of Stay (days)", y = "Count", fill = "Death")
+```
+
+Build Models - trying to predict mortality using logistic regression
+
+```{r}
+# Split data into training and testing sets
+set.seed(123)
+train_index <- sample(1:nrow(icu_data), size = 0.7 * nrow(icu_data))
+train_data <- icu_data[train_index, ]
+test_data <- icu_data[-train_index, ]
+
+# Logistic Regression
+log_model <- glm(death ~ age + length_of_stay + gender, data = train_data, family = binomial)
+
+# Predictions
+preds <- predict(log_model, test_data, type = "response")
+test_data$pred_death <- ifelse(preds > 0.5, 1, 0)
+
+# Evaluate model
+confusionMatrix(as.factor(test_data$pred_death), as.factor(test_data$death))
+```
+
+Use randomForest:
+
+```{r}
+library(randomForest)
+
+# Random Forest Model
+rf_model <- randomForest(death ~ age + length_of_stay + gender, data = train_data, ntree = 100)
+
+# Predictions
+rf_preds <- predict(rf_model, test_data)
+confusionMatrix(as.factor(rf_preds), as.factor(test_data$death))
+```
+
+Compare Models:
+
+```{r}
+# ROC Curve
+library(pROC)
+
+# Logistic Regression ROC
+roc_log <- roc(test_data$death, predict(log_model, test_data, type = "response"))
+plot(roc_log, col = "blue", main = "ROC Curve Comparison")
+
+# Random Forest ROC
+roc_rf <- roc(test_data$death, predict(rf_model, test_data, type = "prob")[, 2])
+plot(roc_rf, col = "red", add = TRUE)
+
+legend("bottomright", legend = c("Logistic Regression", "Random Forest"),
+       col = c("blue", "red"), lty = 1)
+```
+
+Document & Visualize:
+
+```{r}
+# code for plots coming here
+
+# Save plot
+#ggsave("output/age_distribution.png", width = 8, height = 6)
+```
+
+*Describe the data used and general methodological approach used to address the problem described in the @sec-introduction. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why.*
 
 ## Results {#sec-results}
 
