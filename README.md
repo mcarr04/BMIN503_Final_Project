@@ -1,19 +1,57 @@
 # BMIN503/EPID600 Final Project
 
-This repository contains templates for the final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
+BMIN5030 Final Project
+Project Title:
+Effectiveness of AI-Based Models in Predicting Patient Mortality Outcomes
 
-1. To start, **fork** this BMIN503_Final_Project repository.
-1. **Clone** the forked repository to your computer.
-1. Modify the files provided, add your own, and **commit** changes to complete your final project.
-1. **Push**/sync the changes up to your GitHub account.
-1. Create a **pull request** on this, the original BMIN503_Final_Project, repository to turn in your final project.
+Description
+This project explores the effectiveness of AI-based models in predicting patient mortality outcomes compared to traditional clinical methods. It analyzes patient data from the MIMIC-IV database and evaluates the accuracy and potential benefits of AI in healthcare.
 
+Objectives
+To assess the predictive accuracy of AI-based models for patient outcomes such as ICU readmissions or mortality.
+To compare AI-based predictions with traditional clinical prediction methods.
+To identify key factors influencing prediction accuracy.
 
-Follow the instructions [here][forking] if you are unsure what the above steps mean.
+Dataset
+Source: MIMIC-IV database
 
-DUE DATE FOR FINAL VERSION: 12/13/24 11:59PM. This is a hard deadline. Turn in whatever you have by this date.
+Description: Contains de-identified health-related data associated with critical care unit patients.
 
+Tools and Technologies
+Programming Language: R
+IDE: RStudio
+Libraries:
+  tidyverse for data manipulation and visualization
+  caret for model training
+  randomForest for AI-based predictions
+  survival for survival analysis
 
-<!-- Links -->
-[forking]: https://guides.github.com/activities/forking/
+Repository Structure
+  data/: Contains preprocessed datasets used for modeling and analysis.
+  scripts/: R scripts for data processing, modeling, and analysis.
+  results/: Outputs, including model results and visualizations.
+  docs/: Project documentation and presentation files.
+  README.md: Project overview (this file).
 
+Results
+The analysis demonstrates [briefly describe key findings].
+Insights into the potential benefits of AI-based predictions in clinical settings are highlighted.
+
+Limitations
+The project is limited to the scope of the MIMIC-IV dataset.
+Computational constraints may affect model training and evaluation.
+
+Future Work
+  Extend the analysis to other patient outcomes.
+  Integrate additional datasets to improve model generalizability.
+  Compare other AI techniques for prediction accuracy.
+
+Author
+Madison Carrigan
+Email: mcarr04@upenn.edu
+
+Acknowledgments
+Special thanks to Blanca Himes, Anastasia Lucas, Jakob Woerner, Dr. Lama Al-Aswad, and peers of BMIN5030 for their guidance and support throughout this project.
+
+License
+This project is licensed under the MIT License.
