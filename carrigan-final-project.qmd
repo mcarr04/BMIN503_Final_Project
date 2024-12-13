@@ -1,0 +1,630 @@
+---
+title: "Predicting ICU Portality in Adults Using MIMIC-IV Data"
+subtitle: "BMIN503/EPID600 Final Project"
+author: "Madison Carrigan"
+format: html
+editor: visual
+number-sections: true
+embed-resources: true
+---
+
+------------------------------------------------------------------------
+
+## Overview {#sec-overview}
+
+This project investigates the factors influencing mortality in adult ICU patients using the MIMIC-IV dataset. By analyzing clinical and demographic data, the project compares traditional logistic regression models with advanced machine learning techniques such as Random Forest and XGBoost. The ultimate goal is to identify key predictors of ICU mortality, assess the potential of AI-driven models to enhance prediction accuracy, and explore how these models could support clinicians in making data-informed decisions to improve patient care.
+
+## Introduction {#sec-introduction}
+
+Understanding the predictors of ICU mortality is critical for improving patient outcomes and optimizing resource allocation in intensive care units. ICU mortality rates vary significantly depending on patient demographics, comorbidities, and clinical interventions. Accurate mortality predictions can help guide decisions about patient care, prioritize interventions, and allocate resources effectively.
+
+Traditional logistic regression provides a robust and interpretable framework but is often constrained by its linear assumptions. Machine learning techniques, such as Random Forest and XGBoost, overcome these limitations by capturing non-linear relationships and complex interactions among variables, enabling more accurate and nuanced predictions.
+
+This study integrates data science, clinical medicine, and biomedical informatics to address ICU mortality prediction. Data science contributes advanced machine learning methods, clinical expertise informs the selection of meaningful predictors, and biomedical informatics supports the integration and analysis of complex datasets. Conversations with experts in ophthalmology and biomedical informatics highlighted the importance of accurate mortality prediction in managing ICU outcomes. By leveraging insights from these fields, this project evaluates AI's potential to improve the accuracy and utility of ICU mortality prediction models, offering data-driven insights to enhance clinical decision-making.
+
+## Methods {#sec-methods}
+
+### To begin the project, the first step involves data retrieval and preprocessing on the MIMIC-IV dataset.
+
+### Install Required Libraries:
+
+```{r}
+options(repos = c(CRAN = "https://cran.rstudio.com/"))
+
+suppressMessages(suppressWarnings(install.packages(c("DBI", "dbplyr", "RPostgres", "tidyverse", "lubridate", "ggplot2", "caret", "randomForest", "xgboost", "pROC", "skimr", "corrplot", "RSQLite", "tidyverse", "data.table", "Matrix", "caTools"))))
+
+# Load all packages
+suppressPackageStartupMessages({
+  library(DBI)
+  library(dbplyr)
+  library(RPostgres)
+  library(tidyverse)
+  library(lubridate)
+  library(ggplot2)
+  library(caret)
+  library(randomForest)
+  library(xgboost)
+  library(pROC)
+  library(skimr)
+  library(corrplot)
+  library(RSQLite)
+  library(tidyverse)
+  library(data.table)
+  library(reshape2)
+  library(Matrix)
+  library(caTools)
+})
+
+# Print a message to confirm successful setup
+cat("All packages successfully installed and loaded!\n")
+```
+
+## **Data Extraction**
+
+### Data was extracted from the MIMIC-IV dataset, focusing on ICU stays, demographics, and mortality outcomes.
+
+```{r}
+hosp_path <- "~/Desktop/mimic-iv-3.1/mimic-iv-3.1/hosp"
+icu_path <- "~/Desktop/mimic-iv-3.1/mimic-iv-3.1/icu"
+
+hosp_files <- list.files(path = hosp_path, pattern = "*.csv", full.names = TRUE)
+hosp_data <- lapply(hosp_files, function(file) read_csv(file, show_col_types = FALSE))
+
+names(hosp_data) <- basename(hosp_files) %>% str_remove(".csv")
+
+icu_files <- list.files(path = icu_path, pattern = "*.csv", full.names = TRUE)
+icu_data <- lapply(icu_files, function(file) read_csv(file, show_col_types = FALSE))
+names(icu_data) <- basename(icu_files) %>% str_remove(".csv")
+```
+
+### **Data Cleaning -** clean and prepare data - handle missing values and transform variables
+
+```{r}
+icustays_data <- icu_data[["icustays"]]  
+patients_data <- hosp_data[["patients"]]  
+admissions_data <- hosp_data[["admissions"]]  # Replace "admissions" with the correct name
+
+# Query ICU admissions with patient demographics and outcomes
+icu_data <- icustays_data %>%
+  inner_join(patients_data, by = c("subject_id" = "subject_id")) %>%
+  inner_join(admissions_data, by = c("hadm_id" = "hadm_id")) %>%
+  select(subject_id.x, hadm_id, stay_id, gender, dod, intime, outtime, anchor_age, deathtime) %>%
+  filter(anchor_age >= 18) %>% # Focus on adults
+  collect() # Pull the data into R for local analysis
+
+# Save extracted data for reuse
+dir.create("data", showWarnings = FALSE) # Create the directory if it doesn't exist
+write_csv(icu_data, "data/icu_data.csv")
+```
+
+```{r}
+# Load ICU data
+icu_data <- read_csv("data/icu_data.csv")
+
+# Clean data
+icu_data <- icu_data %>%
+  mutate(length_of_stay = as.numeric(difftime(outtime, intime, units = "days")),
+         death = ifelse(deathtime == "Y", 1, 0)) %>%
+  filter(length_of_stay > 0) # Remove invalid stays
+
+# Summary statistics to check - uncomment the code line below if you would like to see
+#summary(icu_data)
+```
+
+### Exploratory Data Analysis - Visualizing trends and relationships in the data
+
+```{r}
+# Histogram of 'anchor_age'
+ggplot(icu_data, aes(x = anchor_age)) +
+  geom_histogram(binwidth = 5, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Histogram of Anchor Age", x = "Anchor Age", y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+# Boxplot of 'anchor_age' by 'gender'
+ggplot(icu_data, aes(x = gender, y = anchor_age, fill = gender)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Boxplot of Anchor Age by Gender", x = "Gender", y = "Anchor Age") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+```
+
+```{r}
+# Histogram of Length of Stay with x-axis range from 0 to 50
+ggplot(icu_data, aes(x = length_of_stay)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black", alpha = 0.7) +
+  labs(title = "Distribution of Length of Stay in ICU", 
+       x = "Length of Stay (Days)", 
+       y = "Frequency") +
+  theme_minimal() +
+  scale_x_continuous(limits = c(0, 50))  # Set x-axis scale from 0 to 50
+```
+
+## **Modeling Approach**
+
+## **1) Logistic Regression:** Evaluate mortality predictors using interpretable linear models
+
+## **2) Random Forest:** Access complex interactions and non-linear relationships
+
+## **3) XGBoost:** Utilize gradient-boosting trees for optimized prediction accuracy
+
+### Logistic Regression:
+
+-   Start by preparing the data, convert variables to factors if needed, and get training and testing sets all good to go.
+
+```{r}
+# Prepare the data
+icu_data <- icu_data %>%
+  mutate(mortality = ifelse(!is.na(dod), 1, 0))
+  #select(gender, anchor_age, mortality)
+
+# Convert gender to a factor
+icu_data$gender <- as.factor(icu_data$gender)
+
+# Split the data into training and testing sets
+set.seed(42)
+split <- sample.split(icu_data$mortality, SplitRatio = 0.8)
+
+train_data <- subset(icu_data, split == TRUE)
+test_data <- subset(icu_data, split == FALSE)
+
+# Build the logistic regression model
+logistic_model <- glm(mortality ~ gender + anchor_age, data = train_data, family = binomial)
+
+# Summarize the model
+print(summary(logistic_model))
+
+# Make predictions and evaluate the model... Predict probabilities
+test_data$predicted_prob <- predict(logistic_model, newdata = test_data, type = "response")
+
+# Convert probabilities to binary predictions
+test_data$predicted <- ifelse(test_data$predicted_prob > 0.5, 1, 0)
+
+# Create a confusion matrix
+confusion_matrix <- table(test_data$mortality, test_data$predicted)
+print("Confusion Matrix:")
+print(confusion_matrix)
+
+# Calculate accuracy
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", round(accuracy, 4)))
+```
+
+-   Not impressed with this logistic regression model's performance of predicting mortality in the ICU. The genderM coefficient indicates that being male slightly reduces the log odds of mortality compared to being female. However, this effect is not statistically significant (p = 0.302) - no strong evidence to suggest that gender impacts mortality in this datset. The anchor_age coefficient indicates that for each additional year of age, the log odds of mortality increase by 0.0347. This effect is statistically significant (p \< 0.001) meaning that age is an important predictor of mortality in this model. This is something I assumed coming into this. The reduction in deviance suggests that the model explains some of the variation in mortality compared to a model with no predictors... but the remaining residual deviance indicates there is still unexplained variability.
+
+-   The model only correctly predicts mortality status 64.19% of the time. However, this accuracy alone may not be the best metric, as it doesn't account for class imbalance (e.g. mortality cases might be fewer than non-mortality cases).
+
+-   This simple logistic regression model needs some boosting, some help to perform better. Let's try again with some different data...
+
+```{r}
+# Calculate ICU stay duration in hours from icustays_data
+icustays_data <- icustays_data %>%
+  mutate(icu_duration_hours = as.numeric(difftime(outtime, intime, units = "hours")))
+
+# rename subject_id.x to subject_id for merge
+icu_data <- icu_data %>%
+  rename(subject_id = subject_id.x)
+
+# Merge icu_data with icustays_data using subject_id
+icu_data <- icu_data %>%
+  inner_join(icustays_data %>% select(subject_id, stay_id, first_careunit, last_careunit, icu_duration_hours), by = "subject_id") %>%
+  mutate(
+    mortality = ifelse(!is.na(dod), 1, 0),  # Derive mortality
+    first_careunit = as.factor(first_careunit),
+    last_careunit = as.factor(last_careunit)
+  ) %>%
+  select(subject_id, gender, anchor_age, icu_duration_hours, first_careunit, last_careunit, mortality)
+```
+
+```{r}
+# convert categorical variables to factors for proper handling by logistic regression model
+icu_data$gender <- as.factor(icu_data$gender)
+icu_data$first_careunit <- as.factor(icu_data$first_careunit)
+icu_data$last_careunit <- as.factor(icu_data$last_careunit)
+```
+
+```{r}
+# split the dataset into training and testing sets
+set.seed(42)
+split <- sample.split(icu_data$mortality, SplitRatio = 0.8)
+train_data <- subset(icu_data, split == TRUE)
+test_data <- subset(icu_data, split == FALSE)
+```
+
+```{r}
+# Build the logistic regression model... keep age and gender, include icu_duration_hours, first_careunit, and last_careunit as additional predictors
+
+logistic_model2 <- glm(
+  mortality ~ gender + anchor_age + icu_duration_hours + first_careunit + last_careunit,
+  data = train_data,
+  family = binomial
+)
+
+# Summarize the model
+print(summary(logistic_model2))
+```
+
+-   **Significant predictors:**
+
+    -   **Gender (Male):**
+
+        -   Positive coefficient (0.05797) indicates that males have slightly higher odds of mortality compared to females
+
+        -   Significant: p = 0.01099 (significant at the 5% level)
+
+    -   **Anchor Age**
+
+        -   Positive coefficient (0.03604) shows that higher age increases the odds of mortality
+
+        -   Highly significant: p - 2e-16 (very strong evidence of association)
+
+    -   **ICU Stay Duration**
+
+        -   Positive coefficient (0.0009372) indicates that longer ICU stays are associated with higher odds of mortality
+
+        -   Highly significant: p \< 2-16
+
+    -   **First Care Unit**
+
+        -   Several ICU types (e.g., Medical/Surgical ICU, Neuro SICU) are strongly associated with increased mortality
+
+        -   Notable examples:
+
+            -   Coronary Care Unit (CCU): Coefficient of 1.141, significant (p \< 2e-16)
+
+            -   Medical/Surgical Intensive Care Unit (MICU/SICU): Coefficient of 1.651, significant (p \< 2e-16)
+
+            -   Trauma SICU (TSICU): Coefficient of 0.7023, significant (p \< 2e-16)
+
+        -   Some ICY types in first_careunit (e.g., Medicine, Neuro Intermediate) show coefficients close to 0 and high p-values, indicating no meaningful contribution to mortality prediction.
+
+            -   These variables can be considered for removal in future iterations to simplify the model.
+
+    -   **Last Care Unit**
+
+        -   All coefficients for last_careunit are NA due to singularity...
+
+            -   Problem: Coefficients for last_careunit are NA due to singularity, meaning these variables are linearly dependent on other predictors or contain redundant information.
+
+            -   Cause: The categorical predictors first_careunit and last_careunit might overlap significantly or fully explain each other.
+
+            -   Solution: Remove one of the variables or combine them into a single derived feature - like a transition metric between first and last care units. This is more what I was thinking when I built this model.
+
+-   **Model Fit:**
+
+    -   Null Deviance: 50044 (mortality without predictors)
+
+    -   Residual Deviance: 45084 (mortality with predictors) - indicates the model explains some variability in mortality
+
+    -   AIC: 45118 (used for model comparison; lower is better)
+
+    -   Interpretation: The model fits reasonably well but could be improved by addressing singularities and incorporating additional relevant predictors. Let's try a different route...
+
+### **Random Forest:**
+
+```{r}
+data <- icu_data
+data <- na.omit(data)
+
+# Set the target variable as a factor
+data$mortality <- as.factor(data$mortality)
+
+# Split the data into training and testing sets
+set.seed(123)  # For reproducibility
+train_index <- createDataPartition(data$mortality, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+# Train a Random Forest model
+rf_model <- randomForest(mortality ~ ., data = train_data, ntree = 500, mtry = 2, importance = TRUE)
+
+# Evaluate the model on the test set
+predictions <- predict(rf_model, newdata = test_data)
+confusion_matrix <- confusionMatrix(predictions, test_data$mortality)
+
+# Print the results
+print(confusion_matrix)
+print(rf_model)
+
+```
+
+-   This randomForest model achieves 88.17% accuracy, meaning that is correctly classified 88.17% of instances in the test set. The 95% confidence interval for accuracy is 87.62%, 88.71%, showing a high degree of reliability.
+
+    -   Sensitivity (recall for class 0) is 86.42%, meaning the model correctly identified 86.42% of the cases where mortality = 0 (the patient survived)
+
+    -   Specificity (recall for class 1) is 89.96%, meaning the model correctly identified 89.96% of the cases where mortality = 1 (the patient died)
+
+    -   Balanced accuracy is the average of sensitivity and specificity, 88.19%, showing that the model performs well across both classes
+
+    -   Positive Predictive Value (PPV) is 89.75%, meaning that when the model predicts mortality = 0 (survival), it is correct 89.75% of the time
+
+    -   Negative Predictive Value (NPV) is 86.69%, meaning that when the model predicts mortality = 1 (death), it is correct 86.69% of the time
+
+    -   Kappa Statistic is 0.7635, indicating substantial agreement between the model's predictions and the actual outcomes
+
+    -   This random forest model used 500 trees with 2 variables randomly selected at each split. To better understand the model's decisions, we can analyze variable importance using the following code
+
+```{r}
+varImpPlot(rf_model)
+```
+
+### **XGBoost:**
+
+Prepare the data... Ensure all features are numeric.
+
+```{r}
+# Convert categorical variables to numeric using one-hot encoding
+dummies <- dummyVars(mortality ~ ., data = data)
+data_one_hot <- predict(dummies, newdata = data)
+
+# Combine the one-hot encoded features with the target variable
+data_final <- as.data.frame(data_one_hot)
+data_final$mortality <- as.numeric(data$mortality) - 1  # Convert target to 0/1
+
+# Split the data into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(data_final$mortality, p = 0.7, list = FALSE)
+train_data <- data_final[train_index, ]
+test_data <- data_final[-train_index, ]
+
+# Prepare data matrices for XGBoost
+dtrain <- xgb.DMatrix(data = as.matrix(train_data[, -ncol(train_data)]), label = train_data$mortality)
+dtest <- xgb.DMatrix(data = as.matrix(test_data[, -ncol(test_data)]), label = test_data$mortality)
+
+```
+
+```{r}
+# Set XGBoost parameters
+params <- list(
+  booster = "gbtree",
+  objective = "binary:logistic",  # Binary classification
+  eval_metric = "auc",           # Use AUC as the evaluation metric
+  eta = 0.1,                     # Learning rate
+  max_depth = 6,                 # Maximum tree depth
+  min_child_weight = 1,          # Minimum sum of instance weight
+  subsample = 0.8,               # Fraction of data for training
+  colsample_bytree = 0.8         # Fraction of features per tree
+)
+
+# Train the XGBoost model
+xgb_model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 100,                 # Number of boosting rounds
+  watchlist = list(train = dtrain, eval = dtest),  # Monitor performance
+  early_stopping_rounds = 10,    # Stop if no improvement after 10 rounds
+  print_every_n = 10             # Print progress every 10 rounds
+)
+```
+
+```{r}
+# Predict probabilities on the test set
+xgb_probs <- predict(xgb_model, newdata = dtest)
+
+# Convert probabilities to binary predictions
+xgb_predictions <- ifelse(xgb_probs > 0.5, 1, 0)
+
+# Confusion matrix
+confusion_matrix <- table(test_data$mortality, xgb_predictions)
+print("Confusion Matrix:")
+print(confusion_matrix)
+
+# Calculate AUC
+roc_curve <- roc(test_data$mortality, xgb_probs)
+auc_score <- auc(roc_curve)
+print(paste("AUC:", round(auc_score, 4)))
+```
+
+```{r}
+# Get and plot feature importance
+importance_matrix <- xgb.importance(feature_names = colnames(train_data[, -ncol(train_data)]), model = xgb_model)
+xgb.plot.importance(importance_matrix)
+```
+
+-   XGBoost's results demonstrate that it effectively models the relationship between features and mortality outcomes - but it does not outperform Random Forest for this specific dataset.
+
+    -   XGBoost includes mechanisms like regularization (L1 and L2) and early stopping, which helps to prevent overfitting and enhances model generalization. Its flexibility and regularization features make it a powerful choice for predictive modeling... While XGBoost is typically robust, its performance here might have been impacted by feeature encoding (one-hot encoding may have introduced sparsity, affecting performance) or model hyperparameters (fine-tuning, like adjusting learning rate, max depth, or boosting rounds could potentially improve performance).
+
+### Rerun, Recheck, & Compare Models' AUC
+
+```{r}
+# Set the target variable as a factor
+data$mortality <- as.factor(data$mortality)
+
+# Split the data into training and testing sets
+set.seed(123)
+train_index <- createDataPartition(data$mortality, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+# Convert character columns to factors or numeric
+train_data <- train_data %>% mutate(across(where(is.character), as.factor))
+test_data <- test_data %>% mutate(across(where(is.character), as.factor))
+
+# Apply one-hot encoding
+dummies <- dummyVars(mortality ~ ., data = train_data)
+
+# Transform training and testing data
+train_data_encoded <- as.data.frame(predict(dummies, newdata = train_data))
+test_data_encoded <- as.data.frame(predict(dummies, newdata = test_data))
+
+# Add back the target variable
+train_data_encoded$mortality <- as.numeric(train_data$mortality) - 1  # Convert factor to 0/1
+test_data_encoded$mortality <- as.numeric(test_data$mortality) - 1
+
+# Prepare data matrices for XGBoost
+dtrain <- xgb.DMatrix(data = as.matrix(train_data_encoded[, -ncol(train_data_encoded)]), label = train_data_encoded$mortality)
+dtest <- xgb.DMatrix(data = as.matrix(test_data_encoded[, -ncol(test_data_encoded)]), label = test_data_encoded$mortality)
+
+# Set XGBoost parameters
+params <- list(
+  booster = "gbtree",
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  eta = 0.1,
+  max_depth = 6,
+  min_child_weight = 1,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+# Train Logistic Regression Model 1
+log_model <- glm(mortality ~ ., data = train_data, family = binomial)
+
+# Train Logistic Regression Model 2
+log_model2 <- glm(mortality ~ gender + anchor_age + icu_duration_hours + first_careunit + last_careunit, data = train_data, family = binomial)
+
+# Train Random Forest Model
+rf_model <- randomForest(mortality ~ ., data = train_data, ntree = 500, mtry = 2, importance = TRUE)
+
+# Train the XGBoost model
+xgb_model <- xgb.train(
+  params = params,
+  data = dtrain,
+  nrounds = 100,
+  watchlist = list(train = dtrain, eval = dtest),
+  early_stopping_rounds = 10
+)
+
+# Predict probabilities for the test set
+log_probs1 <- predict(log_model, newdata = test_data, type = "response")
+log_probs2 <- predict(log_model2, newdata = test_data, type = "response")
+rf_probs <- predict(rf_model, newdata = test_data, type = "prob")[, 2]
+xgb_probs <- predict(xgb_model, newdata = dtest)
+
+# Compute ROC Curves
+log_roc1 <- roc(test_data$mortality, log_probs1, levels = rev(levels(test_data$mortality)))
+log_roc2 <- roc(test_data$mortality, log_probs2, levels = rev(levels(test_data$mortality)))
+rf_roc <- roc(test_data$mortality, rf_probs, levels = rev(levels(test_data$mortality)))
+xgb_roc <- roc(as.numeric(test_data$mortality) - 1, xgb_probs)
+
+# Plot ROC Curves
+plot(log_roc1, col = "blue", main = "ROC Curve Comparison", lwd = 2)
+plot(log_roc2, col = "green", add = TRUE, lwd = 2)
+plot(rf_roc, col = "red", add = TRUE, lwd = 2)
+plot(roc_curve, col = "purple", add = TRUE, lwd = 2, main = "XGBoost ROC Curve")
+legend("bottomright", legend = c("Logistic Regression 1", "Logistic Regression 2", "Random Forest", "XGBoost"), col = c("blue", "green", "red", "purple"), lwd = 2)
+
+# Print AUC values
+cat("Logistic Regression 1 AUC:", auc(log_roc1), "\n")
+cat("Logistic Regression 2 AUC:", auc(log_roc2), "\n")
+cat("Random Forest AUC:", auc(rf_roc), "\n")
+cat("XGBoost AUC:", auc(xgb_roc), "\n")
+```
+
+The AUC (Area Under the ROC Curve) scores indicate the overall performance of each model in distinguishing between the two classes (mortality = 0 and mortality = 1). Here's a breakdown of the results...
+
+-   Logistic Regression 1 AUC: 0.712 - this model includes all features (mortality \~ .) and achieves a moderate AUC score. Suggests the model has limited ability to discriminate between mortality outcomes.
+
+-   Logistic Regression 2 AUC: 0.711 - this model uses selected features and achieves a similar AUC score. The slightly lower AUC suggests that the excluded features in this model are not significantly improving discrimination power.
+
+-   Random Forest AUC: 0.953 - this model significantly outperforms both regression models. Indicates excellent ability to differentiate between mortality outcomes, likely due to Random Forests's capacity to model complex interactions and non-linear relationships between features.
+
+-   XGBoost AUC: 0.893 - this model also significantly outperforms both regression models, underscoring the importance of machine learning approaches in predicting mortality outcomes, especially when complex relationships exist in the data.
+
+## Results {#sec-results}
+
+### Logistic Regression 1:
+
+-   AUC: 0.712 - this model includes all features and achieves a moderate AUC score.
+
+-   Key Observations: The model demonstrates limited ability to discriminate between mortality outcomes. Predictors like age and ICU duration are important, but the linearity assumption limits the model's ability to capture complex relationships.
+
+-   Limitations: moderate performance, failed to capture non-linear patterns in the data
+
+```{r}
+# Summary of Logistic Regression Model 1
+cat("Logistic Regression Model 1 Summary:\n")
+print(summary(log_model))
+```
+
+### Logistic Regression 2:
+
+-   AUC: 0.711 - this model uses selected features (gender, anchor_age, icu_duration_hours, first_careunit, last_careunit) and achieves a slightly lower AUC.
+
+-   Key Observations: The excluded features in this model do not significantly improve or degrade performance. Age remains the most significant predictor, while gender and ICU unit types contribute less predictively.
+
+```{r}
+# Summary of Logistic Regression Model 2
+cat("\nLogistic Regression Model 2 Summary:\n")
+print(summary(log_model2))
+```
+
+### **Random Forest:**
+
+-   AUC: 0.953 - this model significantly outperforms all other models
+
+-   Key Observations: Captures non-linear relationships and interactions among variables effectively. Age, ICU duration, and ICU admission type emerge as the most critical predictors. The model achieves a balanced accuracy with strong sensitivity and specificity, demonstrating excellent predictive power.
+
+```{r}
+# Summary of Random Forest Model
+cat("\nRandom Forest Model Summary:\n")
+print(rf_model)
+
+# Variable Importance for Random Forest
+cat("\nRandom Forest Variable Importance:\n")
+print(importance(rf_model))
+
+# Plot variable importance
+varImpPlot(rf_model)
+```
+
+## **XGBoost:**
+
+-   AUC: 0.893 - performs better than both logistic regression models but slightly underperforms Random Forest.
+
+-   Key Observations: Captures complex relationships between variables and includes built-in regularization to prevent overfitting. Hyperparameter tuning (e.g., learning rate, max depth) might further improve performance. While slightly less performant than Random Forest in this analysis, XGBoost provides robust and interpretable insights into feature importance.
+
+```{r}
+# Summary of XGBoost Model
+cat("\nXGBoost Model Summary:\n")
+print(xgb_model)
+
+# Feature Importance for XGBoost
+cat("\nXGBoost Feature Importance:\n")
+importance_matrix <- xgb.importance(model = xgb_model)
+print(importance_matrix)
+
+# Plot feature importance
+xgb.plot.importance(importance_matrix)
+```
+
+```{r}
+# Overall model performance summary
+cat("\nModel Performance Summary:\n")
+cat("Logistic Regression 1 AUC:", auc(log_roc1), "\n")
+cat("Logistic Regression 2 AUC:", auc(log_roc2), "\n")
+cat("Random Forest AUC:", auc(rf_roc), "\n")
+cat("XGBoost AUC:", auc(xgb_roc), "\n")
+```
+
+## Conclusion
+
+This study evaluated multiple models to predict ICU mortality in adults using the MIMIC-IV dataset. The results highlighted the following key insights:
+
+-   Logistic Regression Models:
+
+    -   While interpretable and simple to implement, logistic regression models struggle to capture non-linear patterns and interactions in the data.Both Logistic Regression 1 (AUC 0.712) and Logistic Regression 2 (AUC 0.711) demonstrate limited predictive power compared to machine learning approaches.
+
+-   Random Forest:
+
+    -   Random Forest emerged as the best-performing model, achieving the highest AUC (0.953) and balanced accuracy (88.19%). Its ability to capture complex relationships and rank feature importance makes it a valuable tool for predicting ICU mortality.
+
+-   XGBoost:
+
+    -   XGBoost offers strong performance (AUC 0.893) and regularization techniques to prevent overfitting, making it a robust alternative. However, it slightly underperforms compared to Random Forest in this analysis.
+
+-   Key Predictors Across Models:
+
+    -   Age, ICU duration, and ICU admission type consistently emerged as the most important predictors of mortality across all models.
+
+-   Implications for Clinical Practice:
+
+    -   Machine learning models like Random Forest and XGBoost can significantly enhance mortality prediction accuracy, providing clinicians with valuable insights for targeted interventions and resource allocation.
+
+This study demonstrates the value of leveraging machine learning techniques, such as Random Forest and XGBoost, alongside traditional logistic regression to predict ICU mortality in adults. Random Forest achieved the highest AUC (0.953), underscoring its ability to capture complex relationships and interactions among predictors like age, ICU duration, and admission type. XGBoost also showed strong performance (AUC 0.893) and highlighted the advantages of regularization and boosting in predictive modeling.
+
+While logistic regression models provided interpretable insights, their limitations in handling non-linear relationships resulted in moderate performance (AUC \~0.71). These findings highlight the importance of selecting appropriate models based on the dataset's complexity and the prediction task.
+
+By integrating data science, clinical expertise, and biomedical informatics, this project illustrates how AI-driven tools can improve mortality predictions in ICU settings. These insights have the potential to inform targeted interventions, optimize resource allocation, and ultimately improve patient outcomes. Future work could explore additional predictors, refine hyperparameters, and assess model performance across diverse patient populations to further enhance the utility of these models in clinical practice.
